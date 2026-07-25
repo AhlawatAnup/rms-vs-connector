@@ -21,49 +21,17 @@
         "title": "Register to Cloud"
       },
       {
-        "command": "rms-vs-connector.openFile",
-        "title": "Open File"
-      },
-      {
-        "command": "rms-vs-connector.newFile",
-        "title": "New File",
-        "icon": "$(new-file)"
-      },
-      {
-        "command": "rms-vs-connector.newFolder",
-        "title": "New Folder",
-        "icon": "$(new-folder)"
-      },
-      {
-        "command": "rms-vs-connector.refresh",
-        "title": "Refresh",
-        "icon": "$(refresh)"
+        "command": "rms-vs-connector.downloadFile",
+        "title": "Download to Local Machine",
+        "category": "Jupyter Cloud"
       }
     ],
-    "views": {
-      "explorer": [
-        {
-          "id": "jupyterExplorer",
-          "name": "Jupyter Files"
-        }
-      ]
-    },
     "menus": {
-      "view/title": [
+      "explorer/context": [
         {
-          "command": "rms-vs-connector.newFile",
-          "when": "view == jupyterExplorer",
-          "group": "navigation"
-        },
-        {
-          "command": "rms-vs-connector.newFolder",
-          "when": "view == jupyterExplorer",
-          "group": "navigation"
-        },
-        {
-          "command": "rms-vs-connector.refresh",
-          "when": "view == jupyterExplorer",
-          "group": "navigation"
+          "command": "rms-vs-connector.downloadFile",
+          "when": "resourceScheme == jupyterfs",
+          "group": "6_copypath"
         }
       ]
     }
