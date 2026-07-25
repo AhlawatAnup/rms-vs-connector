@@ -1,8 +1,45 @@
-const CLOUD_URL = "http://127.0.0.1:3000";
-const TOKEN =
-  "382ac7ebf58c8fc0ac8d5a26c534e61bbe49681cb359b7e9bcb36b346e18f336";
+// These used to be hardcoded. They're now set once, at activation, via
+// configure() — fed by whatever the user enters through src/auth.js's
+// connection prompt (or whatever was previously persisted for them).
+let CLOUD_URL = null;
+let TOKEN = null;
+let MIG_ID = null;
+let REQUEST_ID = null;
+
+exports.configure = ({ origin, token, migId, requestId }) => {
+  CLOUD_URL = origin;
+  TOKEN = token;
+  MIG_ID = migId;
+  REQUEST_ID = requestId;
+};
+
+exports.isConfigured = () =>
+  Boolean(CLOUD_URL && TOKEN && MIG_ID && REQUEST_ID);
+
+// Fully clears both the configured connection AND the in-memory session
+// state (cookie + xsrf token) picked up from a previous set_session() call.
+// Without this, switching connections would leave the old server's cookie
+// sitting in global.sessionCookie until the next set_session() happened to
+// overwrite it.
+exports.reset = () => {
+  CLOUD_URL = null;
+  TOKEN = null;
+  MIG_ID = null;
+  REQUEST_ID = null;
+  global.sessionCookie = null;
+  global.xsrfToken = null;
+};
+
+function assertConfigured() {
+  if (!exports.isConfigured()) {
+    throw new Error(
+      "connect.cloud: not configured yet — run 'Connect to Cloud' first.",
+    );
+  }
+}
 
 function authHeaders(extra = {}) {
+  assertConfigured();
   const headers = {
     Cookie: global.sessionCookie,
     Authorization: `token ${TOKEN}`,
@@ -26,42 +63,63 @@ function extractXsrfToken(cookieHeader) {
 }
 
 // SET SESSIONS
+// Throws on failure — with `.status` (HTTP status code, or "NETWORK" if the
+// request itself couldn't be made) and `.message` (the server's own message
+// when available) — so the caller can show the user something meaningful
+// instead of this failing silently.
 exports.set_session = async () => {
+  assertConfigured();
+  console.log("Setting Up Session");
+
+  let res;
   try {
-    console.log("Setting Up Session");
-    const res = await fetch(CLOUD_URL + "/notebook/proxy/set-session", {
+    res = await fetch(CLOUD_URL + "/notebook/proxy/set-session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({
-        migid: "Mig-2",
-        requestId: "6a639a430729040d619d58ba",
+        migid: MIG_ID,
+        requestId: REQUEST_ID,
       }),
     });
-
-    const setCookie = res.headers.get("set-cookie");
-    if (setCookie) {
-      const cookieHeader = setCookie
-        .split(/,(?=\s*\w+=)/)
-        .map((cookie) => cookie.split(";")[0])
-        .join("; ");
-      global.sessionCookie = cookieHeader;
-
-      const xsrf = extractXsrfToken(cookieHeader);
-      if (xsrf) {
-        global.xsrfToken = xsrf;
-      }
-    }
-
-    const data = await res.json();
-    if (res.ok) {
-      console.log("Session Setup OK");
-    } else {
-      console.log(data.message || "Failed to initialize session");
-    }
   } catch (err) {
-    console.error(err);
+    const netErr = new Error(
+      "Could not reach the cloud server. Check the URL and your network connection.",
+    );
+    netErr.status = "NETWORK";
+    throw netErr;
   }
+
+  const setCookie = res.headers.get("set-cookie");
+  if (setCookie) {
+    const cookieHeader = setCookie
+      .split(/,(?=\s*\w+=)/)
+      .map((cookie) => cookie.split(";")[0])
+      .join("; ");
+    global.sessionCookie = cookieHeader;
+
+    const xsrf = extractXsrfToken(cookieHeader);
+    if (xsrf) {
+      global.xsrfToken = xsrf;
+    }
+  }
+
+  let data = {};
+  try {
+    data = await res.json();
+  } catch (err) {
+    // response wasn't JSON — fall through with data = {}
+  }
+
+  if (!res.ok) {
+    const err = new Error(
+      data.message || `Session setup failed (${res.status})`,
+    );
+    err.status = res.status;
+    throw err;
+  }
+
+  console.log("Session Setup OK");
 };
 
 // GET VERSION OF THE APP
@@ -123,8 +181,9 @@ exports.getContents = async (path = "") => {
   throw err;
 };
 
+// CREATE / SAVE (PUT) — used for both "create new file/folder" and "save changes"
+// body: { type: 'file'|'directory'|'notebook', format?: 'text'|'base64'|'json', content?, path }
 exports.putContents = async (path, body) => {
-  // body: { type: 'file'|'directory'|'notebook', format?: 'text'|'base64'|'json', content?, path }
   const res = await fetch(
     CLOUD_URL + "/notebook/api/contents/" + encodePath(path),
     {
@@ -143,8 +202,8 @@ exports.putContents = async (path, body) => {
   return res.json();
 };
 
+// DELETE a file or directory
 exports.deleteContents = async (path) => {
-  // DELETE a file or directory
   const res = await fetch(
     CLOUD_URL + "/notebook/api/contents/" + encodePath(path),
     {
@@ -160,8 +219,9 @@ exports.deleteContents = async (path) => {
   }
 };
 
+// RENAME / MOVE (PATCH) — Jupyter contents API supports moving by PATCHing
+// the OLD path with { path: newPath }
 exports.renameContents = async (oldPath, newPath) => {
-  // RENAME / MOVE (PATCH) — Jupyter contents API supports moving by PATCHing
   const res = await fetch(
     CLOUD_URL + "/notebook/api/contents/" + encodePath(oldPath),
     {
