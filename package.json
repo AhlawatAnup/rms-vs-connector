@@ -24,6 +24,11 @@
         "command": "rms-vs-connector.downloadFile",
         "title": "Download to Local Machine",
         "category": "Jupyter Cloud"
+      },
+      {
+        "command": "rms-vs-connector.openTerminal",
+        "title": "Open Cloud Terminal",
+        "category": "Jupyter Cloud"
       }
     ],
     "menus": {
@@ -34,6 +39,15 @@
           "group": "6_copypath"
         }
       ]
+    },
+    "terminal": {
+      "profiles": [
+        {
+          "id": "rms-vs-connector.jupyterTerminal",
+          "title": "Jupyter Cloud Terminal",
+          "icon": "cloud"
+        }
+      ]
     }
   },
   "scripts": {
@@ -42,15 +56,18 @@
     "test": "vscode-test"
   },
   "devDependencies": {
-    "@types/vscode": "^1.125.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "24.x",
-    "eslint": "^10.5.0",
+    "@types/vscode": "^1.125.0",
     "@vscode/test-cli": "^0.0.15",
-    "@vscode/test-electron": "^3.0.0"
+    "@vscode/test-electron": "^3.0.0",
+    "eslint": "^10.5.0"
   },
   "overrides": {
     "diff": "^8.0.4",
     "serialize-javascript": "^7.0.6"
+  },
+  "dependencies": {
+    "ws": "^8.21.1"
   }
 }

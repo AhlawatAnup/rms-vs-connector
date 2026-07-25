@@ -3,11 +3,26 @@ const TOKEN =
   "382ac7ebf58c8fc0ac8d5a26c534e61bbe49681cb359b7e9bcb36b346e18f336";
 
 function authHeaders(extra = {}) {
-  return {
+  const headers = {
     Cookie: global.sessionCookie,
     Authorization: `token ${TOKEN}`,
     ...extra,
   };
+
+  // Jupyter Server's default CSRF protection requires the _xsrf cookie's
+  // value to also be echoed back as this header on any state-changing
+  // request (POST/PUT/DELETE/PATCH). GET requests don't need it, but
+  // sending it unconditionally is harmless.
+  if (global.xsrfToken) {
+    headers["X-XSRFToken"] = global.xsrfToken;
+  }
+
+  return headers;
+}
+
+function extractXsrfToken(cookieHeader) {
+  const match = cookieHeader && cookieHeader.match(/(?:^|;\s*)_xsrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 // SET SESSIONS
@@ -31,6 +46,11 @@ exports.set_session = async () => {
         .map((cookie) => cookie.split(";")[0])
         .join("; ");
       global.sessionCookie = cookieHeader;
+
+      const xsrf = extractXsrfToken(cookieHeader);
+      if (xsrf) {
+        global.xsrfToken = xsrf;
+      }
     }
 
     const data = await res.json();
@@ -103,9 +123,8 @@ exports.getContents = async (path = "") => {
   throw err;
 };
 
-// CREATE / SAVE (PUT) — used for both "create new file/folder" and "save changes"
-// body: { type: 'file'|'directory'|'notebook', format?: 'text'|'base64'|'json', content?, path }
 exports.putContents = async (path, body) => {
+  // body: { type: 'file'|'directory'|'notebook', format?: 'text'|'base64'|'json', content?, path }
   const res = await fetch(
     CLOUD_URL + "/notebook/api/contents/" + encodePath(path),
     {
@@ -124,8 +143,8 @@ exports.putContents = async (path, body) => {
   return res.json();
 };
 
-// DELETE a file or directory
 exports.deleteContents = async (path) => {
+  // DELETE a file or directory
   const res = await fetch(
     CLOUD_URL + "/notebook/api/contents/" + encodePath(path),
     {
@@ -141,9 +160,8 @@ exports.deleteContents = async (path) => {
   }
 };
 
-// RENAME / MOVE (PATCH) — Jupyter contents API supports moving by PATCHing
-// the OLD path with { path: newPath }
 exports.renameContents = async (oldPath, newPath) => {
+  // RENAME / MOVE (PATCH) — Jupyter contents API supports moving by PATCHing
   const res = await fetch(
     CLOUD_URL + "/notebook/api/contents/" + encodePath(oldPath),
     {
@@ -182,6 +200,54 @@ exports.createFile = async (parent, name) => {
     path: targetPath,
   });
 };
+
+// ---------------------------------------------------------------------------
+// TERMINALS API — real OS shells on the Jupyter server, streamed over
+// WebSocket using the terminado protocol (['stdout', data], ['stdin', data],
+// ['set_size', rows, cols, height, width]).
+// ---------------------------------------------------------------------------
+
+// Create a new terminal session on the server. Returns { name, ... }.
+exports.createTerminal = async () => {
+  const res = await fetch(CLOUD_URL + "/notebook/api/terminals", {
+    method: "POST",
+    headers: authHeaders(),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to create terminal: ${res.status}`);
+  }
+
+  return res.json();
+};
+
+// Kill a terminal session on the server (frees the pty on the remote host).
+exports.deleteTerminal = async (name) => {
+  await fetch(
+    CLOUD_URL + `/notebook/api/terminals/${encodeURIComponent(name)}`,
+    {
+      method: "DELETE",
+      headers: authHeaders(),
+    },
+  );
+};
+
+// Build the WebSocket URL for a given terminal name. Verify this path
+// against your actual proxy — check the browser DevTools Network tab (WS
+// filter) while opening a terminal in the Jupyter web UI, and adjust the
+// "/notebook/terminals/websocket/" segment if your proxy uses a different
+// prefix.
+exports.getTerminalWebSocketUrl = (name) => {
+  const wsBase = CLOUD_URL.replace(/^http/, "ws");
+  return `${wsBase}/notebook/terminals/websocket/${encodeURIComponent(name)}`;
+};
+
+// The pty layer needs the same cookie/token used for regular HTTP calls.
+exports.getAuthInfo = () => ({
+  cookie: global.sessionCookie,
+  token: TOKEN,
+  xsrfToken: global.xsrfToken,
+});
 
 function encodePath(path) {
   // Encode each segment individually so slashes are preserved as separators

@@ -1,15 +1,45 @@
 // The module 'vscode' contains the VS Code extensibility API
 const vscode = require("vscode");
 
-const { set_session, get_version } = require("./src/connect.cloud.js");
+const {
+  set_session,
+  get_version,
+  createTerminal,
+  deleteTerminal,
+  getTerminalWebSocketUrl,
+  getAuthInfo,
+} = require("./src/connect.cloud.js");
 const JupyterFileSystemProvider = require("./src/Filesystem/JupyterFileSystemProvider.js");
+const JupyterPty = require("./src/Terminal/JupyterPty.js");
 
 const SCHEME = "jupyterfs";
+const PROFILE_ID = "rms-vs-connector.jupyterTerminal";
+const ptyToName = new Map(); // JupyterPty instance -> server-side terminal name
 
 /**
  * @param {vscode.ExtensionContext} context
  */
 async function activate(context) {
+  // Clean up the server-side terminal session whenever the user closes the
+  // VS Code terminal tab, so ptys don't pile up on the Jupyter host. This
+  // covers terminals opened either via the command or via the profile
+  // (dropdown / "New Terminal"), since both end up creating a JupyterPty.
+  context.subscriptions.push(
+    vscode.window.onDidCloseTerminal((terminal) => {
+      const pty = terminal.creationOptions && terminal.creationOptions.pty;
+      const name = pty && ptyToName.get(pty);
+      if (name) {
+        ptyToName.delete(pty);
+        deleteTerminal(name).catch((err) =>
+          console.error(
+            `rms-vs-connector: failed to clean up terminal ${name}`,
+            err,
+          ),
+        );
+      }
+    }),
+  );
+
   // Establish the session FIRST, and fully await it, before the provider is
   // registered. VS Code awaits the promise returned from activate() before
   // it will try to resolve any already-mounted jupyterfs:/ workspace folder
@@ -61,6 +91,47 @@ async function activate(context) {
     }),
   );
 
+  // OPEN CLOUD TERMINAL — spins up a real shell on the Jupyter server and
+  // streams it into a VS Code terminal panel via a Pseudoterminal.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "rms-vs-connector.openTerminal",
+      async () => {
+        const terminal = await createJupyterTerminal();
+        if (terminal) terminal.show();
+      },
+    ),
+  );
+
+  // TERMINAL PROFILE — makes the Jupyter terminal selectable from the
+  // dropdown arrow next to "+" in the terminal panel, from
+  // "Terminal: Select Default Profile", and (if set as default) from a
+  // plain Terminal > New Terminal menu-bar click — no command required.
+  context.subscriptions.push(
+    vscode.window.registerTerminalProfileProvider(PROFILE_ID, {
+      provideTerminalProfile: async () => {
+        let info;
+        try {
+          info = await createTerminal();
+        } catch (err) {
+          vscode.window.showErrorMessage(
+            `Could not start a cloud terminal: ${err.message}`,
+          );
+          return undefined;
+        }
+
+        const wsUrl = getTerminalWebSocketUrl(info.name);
+        const pty = new JupyterPty(info.name, wsUrl, getAuthInfo());
+        ptyToName.set(pty, info.name);
+
+        return new vscode.TerminalProfile({
+          name: `Jupyter: ${info.name}`,
+          pty,
+        });
+      },
+    }),
+  );
+
   // DOWNLOAD TO LOCAL — right-click a file or folder in Explorer to save a
   // real copy to disk. Works for both because it reuses the provider's own
   // readFile/readDirectory through vscode.workspace.fs, so all the
@@ -102,10 +173,32 @@ async function activate(context) {
     vscode.StatusBarAlignment.Left,
     100,
   );
-
-  statusBarItem.text = "$(cloud) U.I.E.T AI Data Centre";
+  statusBarItem.text = "$(cloud) Jupyter Cloud";
+  statusBarItem.tooltip = "Connect to Jupyter Cloud";
+  statusBarItem.command = "rms-vs-connector.registerCloud";
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
+}
+
+async function createJupyterTerminal() {
+  let info;
+  try {
+    info = await createTerminal();
+  } catch (err) {
+    vscode.window.showErrorMessage(
+      `Could not start a cloud terminal: ${err.message}`,
+    );
+    return undefined;
+  }
+
+  const wsUrl = getTerminalWebSocketUrl(info.name);
+  const pty = new JupyterPty(info.name, wsUrl, getAuthInfo());
+  ptyToName.set(pty, info.name);
+
+  return vscode.window.createTerminal({
+    name: `Jupyter: ${info.name}`,
+    pty,
+  });
 }
 
 async function downloadFile(uri) {
@@ -200,7 +293,7 @@ function mountWorkspace() {
     0,
     {
       uri: rootUri,
-      name: "U.I.E.T AI Data Centre",
+      name: "Jupyter Cloud",
     },
   );
 
