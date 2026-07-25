@@ -12,10 +12,12 @@
   "activationEvents": [],
   "main": "./extension.js",
   "contributes": {
-    "commands": [{
-      "command": "rms-vs-connector.helloWorld",
-      "title": "Hello World"
-    }]
+    "commands": [
+      {
+        "command": "rms-vs-connector.registerCloud",
+        "title": "Register to Cloud"
+      }
+    ]
   },
   "scripts": {
     "lint": "eslint .",
