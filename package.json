@@ -9,15 +9,64 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onView:jupyterExplorer",
+    "onCommand:rms-vs-connector.registerCloud"
+  ],
   "main": "./extension.js",
   "contributes": {
     "commands": [
       {
         "command": "rms-vs-connector.registerCloud",
         "title": "Register to Cloud"
+      },
+      {
+        "command": "rms-vs-connector.openFile",
+        "title": "Open File"
+      },
+      {
+        "command": "rms-vs-connector.newFile",
+        "title": "New File",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "rms-vs-connector.newFolder",
+        "title": "New Folder",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "rms-vs-connector.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
       }
-    ]
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "jupyterExplorer",
+          "name": "Jupyter Files"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "rms-vs-connector.newFile",
+          "when": "view == jupyterExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "rms-vs-connector.newFolder",
+          "when": "view == jupyterExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "rms-vs-connector.refresh",
+          "when": "view == jupyterExplorer",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "lint": "eslint .",

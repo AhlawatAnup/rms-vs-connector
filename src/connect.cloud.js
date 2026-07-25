@@ -1,4 +1,6 @@
 const CLOUD_URL = "http://127.0.0.1:3000";
+const TOKEN =
+  "382ac7ebf58c8fc0ac8d5a26c534e61bbe49681cb359b7e9bcb36b346e18f336";
 
 // SET SESSIONS
 exports.set_session = async () => {
@@ -50,6 +52,7 @@ exports.get_version = async () => {
       method: "GET",
       headers: {
         Cookie: global.sessionCookie,
+        Authorization: `token ${TOKEN}`,
       },
     });
 
@@ -64,24 +67,64 @@ exports.get_version = async () => {
 };
 
 // GET ALL DIRECTORY CONTENT
-exports.get_notebook_contents = async () => {
+exports.get_notebook_contents = async (path = "") => {
   try {
-    const res = await fetch(CLOUD_URL + "/notebook/api/contents", {
+    const res = await fetch(CLOUD_URL + "/notebook/api/contents/" + path, {
       method: "GET",
       headers: {
         Cookie: global.sessionCookie,
+        Authorization: `token ${TOKEN}`,
       },
     });
-
-    console.log("Status:", res.status);
 
     const content_type = res.headers.get("content-type");
 
     if (content_type?.includes("application/json")) {
       const data = await res.json();
-      console.log("Contents:", data);
+      return data;
     }
   } catch (err) {
     console.error("Error fetching contents:", err);
   }
+};
+
+// CREATE NEW FOLDER
+exports.createFolder = async (parent, name) => {
+  const body = {
+    type: "directory",
+    path: parent ? `${parent}/${name}/` : name,
+  };
+
+  console.log("Create Folder : ", body.path);
+  const res = await fetch(CLOUD_URL + "/notebook/api/contents/" + parent, {
+    method: "POST",
+    headers: {
+      Cookie: global.sessionCookie,
+      Authorization: `token ${TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+
+  const data = await res.json();
+
+  console.log(data);
+};
+
+// CREATE NEW FILE
+exports.createFile = async (parent, name) => {
+  await fetch(CLOUD_URL + "/notebook/api/contents/" + parent, {
+    method: "POST",
+    headers: {
+      Cookie: global.sessionCookie,
+      Authorization: `token ${TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      type: "file",
+      format: "text",
+      content: "",
+      path: `${parent}/${name}`,
+    }),
+  });
 };
