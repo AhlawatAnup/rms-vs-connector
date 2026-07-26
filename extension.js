@@ -11,14 +11,23 @@ const {
   deleteTerminal,
   getTerminalWebSocketUrl,
   getAuthInfo,
+  listSessions,
+  deleteSession,
+  deleteKernel,
+  listTerminals,
 } = require("./src/connect.cloud.js");
 const { ensureConnection, clearConnection } = require("./src/auth.js");
 const JupyterFileSystemProvider = require("./src/Filesystem/JupyterFileSystemProvider.js");
 const JupyterPty = require("./src/Terminal/JupyterPty.js");
+const {
+  startGateway,
+  stopGateway,
+  events: gatewayEvents,
+} = require("./src/Gateway/localGateway.js");
 
 const SCHEME = "jupyterfs";
 const PROFILE_ID = "rms-vs-connector.jupyterTerminal";
-const JUPYTER_TERMINAL_NAME_RE = /^Jupyter: (.+)$/;
+const JUPYTER_TERMINAL_NAME_RE = /^MAyA: (.+)$/;
 
 // Two status bar items that toggle visibility based on whether a session is
 // actually active (not just "configured" — configure() can be called before
@@ -28,6 +37,14 @@ const JUPYTER_TERMINAL_NAME_RE = /^Jupyter: (.+)$/;
 let connectStatusBarItem;
 let terminateStatusBarItem;
 let sessionActive = false;
+
+// Tracks which kernel a given notebook is using, so we can shut that kernel
+// down automatically when the notebook is closed. Keyed by notebook URI
+// string. Populated via a heuristic: whenever the gateway observes a new
+// kernel WebSocket connect, we assume it belongs to whichever notebook is
+// currently the active editor — reliable for the common case of working
+// with one notebook at a time, less so with several open simultaneously.
+const kernelByNotebook = new Map();
 
 /**
  * @param {vscode.ExtensionContext} context
@@ -40,8 +57,8 @@ async function activate(context) {
     vscode.StatusBarAlignment.Left,
     100,
   );
-  connectStatusBarItem.text = "$(cloud) Jupyter Cloud";
-  connectStatusBarItem.tooltip = "Connect to Jupyter Cloud";
+  connectStatusBarItem.text = "$(cloud) MAyA";
+  connectStatusBarItem.tooltip = "Connect to MAyA";
   connectStatusBarItem.command = "rms-vs-connector.registerCloud";
   context.subscriptions.push(connectStatusBarItem);
 
@@ -50,7 +67,7 @@ async function activate(context) {
     100,
   );
   terminateStatusBarItem.text = "$(circle-slash) Terminate Session";
-  terminateStatusBarItem.tooltip = "End the current Jupyter Cloud session";
+  terminateStatusBarItem.tooltip = "End the current MAyA session";
   terminateStatusBarItem.command = "rms-vs-connector.terminateSession";
   // VS Code's built-in error colors — the same red used for problem/error
   // indicators elsewhere in the status bar, so it reads as "this ends
@@ -97,6 +114,54 @@ async function activate(context) {
     }),
   );
 
+  // Track which kernel belongs to which notebook — see kernelByNotebook's
+  // comment above for the heuristic. This listener just records the
+  // association; actual cleanup happens in onDidCloseNotebookDocument below.
+  const kernelConnectedListener = ({ kernelId }) => {
+    const activeNotebook = vscode.window.activeNotebookEditor?.notebook;
+    if (!activeNotebook) return;
+
+    const uriKey = activeNotebook.uri.toString();
+    console.log(
+      `rms-vs-connector: kernel ${kernelId} associated with notebook ${uriKey}`,
+    );
+    kernelByNotebook.set(uriKey, kernelId);
+  };
+  gatewayEvents.on("kernelConnected", kernelConnectedListener);
+  context.subscriptions.push(
+    new vscode.Disposable(() =>
+      gatewayEvents.off("kernelConnected", kernelConnectedListener),
+    ),
+  );
+
+  // Shut down the kernel a notebook was using the moment its tab closes —
+  // this is what actually solves the "orphaned kernel" garbage buildup,
+  // since VS Code's Jupyter extension has no built-in equivalent for
+  // notebooks opened through a virtual filesystem like ours.
+  context.subscriptions.push(
+    vscode.workspace.onDidCloseNotebookDocument((notebook) => {
+      const uriKey = notebook.uri.toString();
+      const kernelId = kernelByNotebook.get(uriKey);
+      if (!kernelId) return;
+
+      kernelByNotebook.delete(uriKey);
+      console.log(
+        `rms-vs-connector: notebook ${uriKey} closed, shutting down kernel ${kernelId}`,
+      );
+
+      deleteKernel(kernelId)
+        .then(() =>
+          console.log(`rms-vs-connector: shut down kernel ${kernelId}`),
+        )
+        .catch((err) =>
+          console.error(
+            `rms-vs-connector: failed to shut down kernel ${kernelId}`,
+            err,
+          ),
+        );
+    }),
+  );
+
   // Resolve the cloud connection FIRST — from storage if this user has
   // connected before, otherwise via the input box prompt. Everything else
   // (session setup, the FS provider, terminals) depends on connect.cloud.js
@@ -104,7 +169,7 @@ async function activate(context) {
   const connection = await ensureConnection(context);
   if (!connection) {
     vscode.window.showWarningMessage(
-      "Jupyter Cloud: no connection configured. Run 'Connect to Cloud' from the Command Palette when you're ready.",
+      "MAyA: no connection configured. Run 'Connect to MAyA' from the Command Palette when you're ready.",
     );
   } else {
     configure(connection);
@@ -125,6 +190,7 @@ async function activate(context) {
       await get_version();
       sessionActive = true;
       refreshStatusBar();
+      await restoreExistingTerminals();
     } catch (err) {
       await handleSessionError(context, err);
     }
@@ -161,8 +227,9 @@ async function activate(context) {
         sessionActive = true;
         refreshStatusBar();
 
-        vscode.window.showInformationMessage("Connected to Jupyter Cloud.");
+        vscode.window.showInformationMessage("Connected to MAyA.");
         mountWorkspace();
+        await restoreExistingTerminals();
         // Safety net: if the folder was already mounted from a previous
         // session and VS Code cached an empty/stale tree, force it to
         // re-query now that the session is confirmed fresh — so the user
@@ -180,7 +247,7 @@ async function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand("rms-vs-connector.changeConnection", () =>
       terminateAndReconnect(context, {
-        successMessage: "Connected to new cloud machine.",
+        successMessage: "Connected to new MAyA machine.",
       }),
     ),
   );
@@ -230,7 +297,7 @@ async function activate(context) {
           info = await createTerminal();
         } catch (err) {
           vscode.window.showErrorMessage(
-            `Could not start a cloud terminal: ${err.message}`,
+            `Could not start a MAyA terminal: ${err.message}`,
           );
           return undefined;
         }
@@ -239,11 +306,98 @@ async function activate(context) {
         const pty = new JupyterPty(info.name, wsUrl, getAuthInfo());
 
         return new vscode.TerminalProfile({
-          name: `Jupyter: ${info.name}`,
+          name: `MAyA: ${info.name}`,
           pty,
         });
       },
     }),
+  );
+
+  // START NOTEBOOK GATEWAY — spins up a local proxy (127.0.0.1) that
+  // injects the cookie/xsrf/token auth on every request AND every kernel
+  // WebSocket, so VS Code's built-in Jupyter extension can connect via its
+  // normal "Existing Jupyter Server" flow without ever needing to know
+  // about the cookie-based session handshake our backend requires.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "rms-vs-connector.startNotebookGateway",
+      async () => {
+        if (!isConfigured()) {
+          vscode.window.showWarningMessage(
+            "Connect to MAyA first, then start the notebook gateway.",
+          );
+          return;
+        }
+
+        let url;
+        try {
+          url = await startGateway();
+        } catch (err) {
+          vscode.window.showErrorMessage(
+            `Could not start the notebook gateway: ${err.message}`,
+          );
+          return;
+        }
+
+        const choice = await vscode.window.showInformationMessage(
+          `Notebook gateway running. Paste this URL into "Existing Jupyter Server": ${url}`,
+          "Copy URL",
+        );
+        if (choice === "Copy URL") {
+          await vscode.env.clipboard.writeText(url);
+        }
+      },
+    ),
+  );
+
+  // SHUT DOWN ALL KERNELS — manual safety net for anything the automatic
+  // per-notebook cleanup missed (crashes, force-quit, etc). Kills EVERY
+  // running session on the server, same as the browser's own "Shut Down
+  // All" button — this is not selective, so warn clearly before doing it.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "rms-vs-connector.shutDownAllKernels",
+      async () => {
+        if (!isConfigured()) {
+          vscode.window.showWarningMessage("Connect to MAyA first.");
+          return;
+        }
+
+        const confirm = await vscode.window.showWarningMessage(
+          "This will shut down EVERY running kernel/session on the server — including any active in the browser or used by other people. Continue?",
+          { modal: true },
+          "Shut Down All",
+        );
+        if (confirm !== "Shut Down All") return;
+
+        let sessions;
+        try {
+          sessions = await listSessions();
+        } catch (err) {
+          vscode.window.showErrorMessage(
+            `Could not list sessions: ${err.message}`,
+          );
+          return;
+        }
+
+        const results = await Promise.allSettled(
+          sessions.map((s) => deleteSession(s.id)),
+        );
+        const failures = results.filter((r) => r.status === "rejected").length;
+
+        kernelByNotebook.clear();
+
+        if (failures > 0) {
+          vscode.window.showWarningMessage(
+            `Shut down ${sessions.length - failures} of ${sessions.length} sessions (${failures} failed).`,
+          );
+        } else {
+          vscode.window.showInformationMessage(
+            `Shut down ${sessions.length} session(s).`,
+          );
+        }
+      },
+    ),
   );
 
   // DOWNLOAD TO LOCAL — right-click a file or folder in Explorer to save a
@@ -313,7 +467,7 @@ async function terminateAndReconnect(context, { successMessage }) {
     // User cancelled — leave things fully disconnected rather than
     // reconnecting to whatever was there before.
     vscode.window.showInformationMessage(
-      "Disconnected. Run 'Connect to Cloud' when you're ready to reconnect.",
+      "Disconnected. Run 'Connect to MAyA' when you're ready to reconnect.",
     );
     return;
   }
@@ -332,6 +486,7 @@ async function terminateAndReconnect(context, { successMessage }) {
   refreshStatusBar();
 
   mountWorkspace();
+  await restoreExistingTerminals();
   await vscode.commands.executeCommand(
     "workbench.files.action.refreshFilesExplorer",
   );
@@ -389,18 +544,63 @@ async function createJupyterTerminal() {
     info = await createTerminal();
   } catch (err) {
     vscode.window.showErrorMessage(
-      `Could not start a cloud terminal: ${err.message}`,
+      `Could not start a MAyA terminal: ${err.message}`,
     );
     return undefined;
   }
 
-  const wsUrl = getTerminalWebSocketUrl(info.name);
-  const pty = new JupyterPty(info.name, wsUrl, getAuthInfo());
+  return attachToTerminal(info.name);
+}
+
+// Opens a VS Code terminal tab wired to an ALREADY-EXISTING server-side
+// terminal session, rather than creating a new one — used both by
+// createJupyterTerminal (right after it creates one) and by
+// restoreExistingTerminals (for sessions that already existed before this
+// activation, e.g. a long-running job left over from hours ago).
+function attachToTerminal(name) {
+  const wsUrl = getTerminalWebSocketUrl(name);
+  const pty = new JupyterPty(name, wsUrl, getAuthInfo());
 
   return vscode.window.createTerminal({
-    name: `Jupyter: ${info.name}`,
+    name: `MAyA: ${name}`,
     pty,
   });
+}
+
+// Finds terminal sessions already running on the server (e.g. one left
+// over from before a disconnect) and opens a VS Code terminal tab for each
+// one that isn't already represented in this window — so reconnecting
+// doesn't strand a long-running job with no visible terminal.
+async function restoreExistingTerminals() {
+  let sessions;
+  try {
+    sessions = await listTerminals();
+  } catch (err) {
+    console.error("rms-vs-connector: failed to list existing terminals", err);
+    return;
+  }
+
+  if (!sessions || sessions.length === 0) return;
+
+  const alreadyOpen = new Set(
+    vscode.window.terminals
+      .map((t) => t.name.match(JUPYTER_TERMINAL_NAME_RE))
+      .filter(Boolean)
+      .map((match) => match[1]),
+  );
+
+  let restoredCount = 0;
+  for (const session of sessions) {
+    if (alreadyOpen.has(session.name)) continue;
+    attachToTerminal(session.name);
+    restoredCount++;
+  }
+
+  if (restoredCount > 0) {
+    vscode.window.showInformationMessage(
+      `Reattached ${restoredCount} existing MAyA terminal${restoredCount === 1 ? "" : "s"} still running on the server.`,
+    );
+  }
 }
 
 async function downloadFile(uri) {
@@ -495,7 +695,7 @@ function mountWorkspace() {
     0,
     {
       uri: rootUri,
-      name: "Jupyter Cloud",
+      name: "MAyA",
     },
   );
 
@@ -515,7 +715,9 @@ function unmountWorkspace() {
   }
 }
 
-function deactivate() {}
+function deactivate() {
+  return stopGateway();
+}
 
 module.exports = {
   activate,

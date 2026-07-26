@@ -121,17 +121,30 @@ class JupyterFileSystemProvider {
 
   async readDirectory(uri) {
     const serverPath = toServerPath(uri);
-    const data = await getContents(serverPath);
+    let data;
+    try {
+      data = await getContents(serverPath);
+    } catch (err) {
+      console.error(`rms-vs-connector: readDirectory("${serverPath}") failed`, err);
+      vscode.window.showErrorMessage(
+        `Jupyter FS: failed to list "${serverPath || "/"}" — ${err.message}`,
+      );
+      if (err.code === "ENOENT") {
+        throw vscode.FileSystemError.FileNotFound(uri);
+      }
+      throw vscode.FileSystemError.Unavailable(uri);
+    }
+
     if (data.type !== "directory") {
       throw vscode.FileSystemError.FileNotADirectory(uri);
     }
 
     const entries = data.content.map((item) => [
       item.name,
-      item.type === "directory"
-        ? vscode.FileType.Directory
-        : vscode.FileType.File,
+      item.type === "directory" ? vscode.FileType.Directory : vscode.FileType.File,
     ]);
+
+    console.log(`readDirectory("${serverPath || "/"}") ->`, entries);
 
     this._dirCache.set(serverPath, entries);
     return entries;
@@ -194,10 +207,30 @@ class JupyterFileSystemProvider {
 
     let body;
     if (isNotebook(serverPath)) {
+      const text = buffer.toString("utf8").trim();
+      let notebookContent;
+
+      if (!text) {
+        // Brand-new, still-empty .ipynb (e.g. Explorer > New File writes a
+        // 0-byte file before any real content exists). There's nothing to
+        // parse yet — substitute a minimal valid nbformat skeleton instead
+        // of calling JSON.parse on an empty string, which throws exactly
+        // "Unexpected end of JSON input".
+        notebookContent = { cells: [], metadata: {}, nbformat: 4, nbformat_minor: 5 };
+      } else {
+        try {
+          notebookContent = JSON.parse(text);
+        } catch (err) {
+          throw vscode.FileSystemError.Unavailable(
+            `Invalid notebook JSON in ${serverPath}: ${err.message}`,
+          );
+        }
+      }
+
       body = {
         type: "notebook",
         format: "json",
-        content: JSON.parse(buffer.toString("utf8")),
+        content: notebookContent,
         path: serverPath,
       };
     } else if (isBinary(serverPath)) {
@@ -220,12 +253,7 @@ class JupyterFileSystemProvider {
     this._invalidateParent(serverPath);
 
     this._emitter.fire([
-      {
-        type: exists
-          ? vscode.FileChangeType.Changed
-          : vscode.FileChangeType.Created,
-        uri,
-      },
+      { type: exists ? vscode.FileChangeType.Changed : vscode.FileChangeType.Created, uri },
     ]);
   }
 

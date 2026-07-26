@@ -1,8 +1,10 @@
 {
-  "name": "rms-vs-connector",
-  "displayName": "RMS VS Connector",
-  "description": "Open-source distributed resource management platform for securely sharing CPU and GPU infrastructure over the internet. Manage compute resources, monitor usage, and launch workloads directly from VS Code.",
-  "version": "0.0.1",
+  "name": "maya-vscode-connector",
+  "publisher": "MenthosaSolutions",
+  "displayName": "MAyA - VS Code Connector",
+  "description": "MAyA — Multi-user Allocation sYstem for compute Automation. This extension allows you to connect to MAyA and manage your compute resources directly from VS Code.",
+  "version": "1.0.1",
+  "repository": "https://github.com/AhlawatAnup/rms-vs-connector",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -10,7 +12,7 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:jupyterExplorer",
+    "onFileSystem:jupyterfs",
     "onCommand:rms-vs-connector.registerCloud"
   ],
   "main": "./extension.js",
@@ -18,17 +20,43 @@
     "commands": [
       {
         "command": "rms-vs-connector.registerCloud",
-        "title": "Register to Cloud"
+        "title": "Connect to MAyA",
+        "category": "MAyA"
+      },
+      {
+        "command": "rms-vs-connector.changeConnection",
+        "title": "Change MAyA Connection",
+        "category": "MAyA"
+      },
+      {
+        "command": "rms-vs-connector.terminateSession",
+        "title": "Terminate Session",
+        "category": "MAyA"
+      },
+      {
+        "command": "rms-vs-connector.openTerminal",
+        "title": "Open MAyA Terminal",
+        "category": "MAyA"
       },
       {
         "command": "rms-vs-connector.downloadFile",
         "title": "Download to Local Machine",
-        "category": "Jupyter Cloud"
+        "category": "MAyA"
       },
       {
-        "command": "rms-vs-connector.openTerminal",
-        "title": "Open Cloud Terminal",
-        "category": "Jupyter Cloud"
+        "command": "rms-vs-connector.unmount",
+        "title": "Disconnect Workspace",
+        "category": "MAyA"
+      },
+      {
+        "command": "rms-vs-connector.startNotebookGateway",
+        "title": "Start Notebook Gateway",
+        "category": "MAyA"
+      },
+      {
+        "command": "rms-vs-connector.shutDownAllKernels",
+        "title": "Shut Down All Kernels",
+        "category": "MAyA"
       }
     ],
     "menus": {
@@ -44,8 +72,8 @@
       "profiles": [
         {
           "id": "rms-vs-connector.jupyterTerminal",
-          "title": "Jupyter Cloud Terminal",
-          "icon": "cloud"
+          "title": "MAyA Terminal",
+          "icon": "eye"
         }
       ]
     }

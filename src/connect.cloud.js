@@ -267,6 +267,22 @@ exports.createFile = async (parent, name) => {
 // ['set_size', rows, cols, height, width]).
 // ---------------------------------------------------------------------------
 
+// Lists all terminal sessions currently running on the server — used to
+// reattach VS Code terminal tabs to sessions that outlived a disconnect
+// (e.g. a long-running job started hours ago, before VS Code reconnected).
+exports.listTerminals = async () => {
+  const res = await fetch(CLOUD_URL + "/notebook/api/terminals", {
+    method: "GET",
+    headers: authHeaders(),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to list terminals: ${res.status}`);
+  }
+
+  return res.json();
+};
+
 // Create a new terminal session on the server. Returns { name, ... }.
 exports.createTerminal = async () => {
   const res = await fetch(CLOUD_URL + "/notebook/api/terminals", {
@@ -302,12 +318,63 @@ exports.getTerminalWebSocketUrl = (name) => {
   return `${wsBase}/notebook/terminals/websocket/${encodeURIComponent(name)}`;
 };
 
+// ---------------------------------------------------------------------------
+// KERNELS / SESSIONS — cleanup for notebook kernels started through the
+// local notebook gateway. VS Code's Jupyter extension starts a NEW kernel
+// session every time it (re)connects to a notebook opened through our
+// virtual filesystem (it can't verify jupyterfs:// paths are stable across
+// reopens, so it can't safely reuse an existing session) — these functions
+// let us tidy those up instead of leaving them running forever.
+// ---------------------------------------------------------------------------
+
+// Lists all live kernel sessions on the server — same data the browser's
+// own "Shut Down All" kernel panel is built from.
+exports.listSessions = async () => {
+  const res = await fetch(CLOUD_URL + "/notebook/api/sessions", {
+    method: "GET",
+    headers: authHeaders(),
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to list sessions: ${res.status}`);
+  }
+
+  return res.json();
+};
+
+// Deleting a session also shuts down its associated kernel — standard
+// Jupyter Server cascade behavior, so this is normally all you need.
+exports.deleteSession = async (sessionId) => {
+  await fetch(
+    CLOUD_URL + `/notebook/api/sessions/${encodeURIComponent(sessionId)}`,
+    {
+      method: "DELETE",
+      headers: authHeaders(),
+    },
+  );
+};
+
+// Direct kernel shutdown, for cases where we only have a kernel id (from
+// watching the gateway's WebSocket traffic) rather than a session id.
+exports.deleteKernel = async (kernelId) => {
+  await fetch(
+    CLOUD_URL + `/notebook/api/kernels/${encodeURIComponent(kernelId)}`,
+    {
+      method: "DELETE",
+      headers: authHeaders(),
+    },
+  );
+};
+
 // The pty layer needs the same cookie/token used for regular HTTP calls.
 exports.getAuthInfo = () => ({
   cookie: global.sessionCookie,
   token: TOKEN,
   xsrfToken: global.xsrfToken,
 });
+
+// The local notebook gateway needs the raw origin as a proxy target.
+exports.getOrigin = () => CLOUD_URL;
 
 function encodePath(path) {
   // Encode each segment individually so slashes are preserved as separators

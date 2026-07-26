@@ -1,0 +1,48 @@
+<svg width="620" height="160" viewBox="0 0 620 160" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .icon-fill{
+        fill:#000;
+      }
+      .icon-stroke{
+        fill:none;
+        stroke:#000;
+        stroke-width:8;
+        stroke-linecap:round;
+      }
+      .word{
+        font-family:"Roboto Mono","JetBrains Mono","IBM Plex Mono","SF Mono","Consolas",monospace;
+        font-size:58px;
+        font-weight:300;
+        fill:#000;
+        letter-spacing:-2px;
+      }
+    </style>
+  </defs>
+
+  <!-- ===== Logo (acts as M) ===== -->
+
+  <!-- lower arc -->
+  <path class="icon-stroke"
+        d="M32 92
+           A34 34 0 0 0 66 126"/>
+
+  <!-- upper arc -->
+  <path class="icon-stroke"
+        d="M66 34
+           A34 34 0 0 1 100 68"/>
+
+  <!-- dots -->
+  <circle class="icon-fill" cx="24" cy="82" r="4.8"/>
+  <circle class="icon-fill" cx="108" cy="82" r="4.8"/>
+
+  <!-- stylized M -->
+  <polygon class="icon-fill"
+           points="52,52 52,112 78,82"/>
+  <polygon class="icon-fill"
+           points="82,82 108,52 108,112"/>
+
+  <!-- AyA -->
+  <text x="138" y="99" class="word">AyA</text>
+
+</svg>

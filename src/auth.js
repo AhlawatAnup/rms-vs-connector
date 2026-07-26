@@ -48,6 +48,7 @@ function enforceProtocol(urlString, mode) {
 // ---------------------------------------------------------------------------
 // URL PARSING
 // ---------------------------------------------------------------------------
+// Expected shape: <protocol>://<host>[:port]/<request_id>/<mig_id>/<token>
 // All three path segments are dynamic values, in that fixed order — there's
 // no literal keyword in the path to anchor on.
 function parseConnectionUrl(rawUrl) {
@@ -62,7 +63,7 @@ function parseConnectionUrl(rawUrl) {
 
   if (segments.length < 3) {
     throw new Error(
-      "URL must look like https://aicentre.puchd.ac.in/382ac7/d5pljg/thy7bbyt",
+      "URL must look like http://host:port/<request_id>/<mig_id>/<token>",
     );
   }
 
@@ -79,9 +80,9 @@ function parseConnectionUrl(rawUrl) {
 // ---------------------------------------------------------------------------
 async function promptForConnectionUrl() {
   const input = await vscode.window.showInputBox({
-    title: "Connect to Jupyter Cloud",
-    prompt: "Paste the cloud machine URL you were given",
-    placeHolder: "Get your URL From AI Data Centre Dashboard",
+    title: "Connect to MAyA",
+    prompt: "Paste your MAyA connection URL",
+    placeHolder: "http://127.0.0.1:3000/<request_id>/<mig_id>/<token>",
     ignoreFocusOut: true,
     validateInput: (value) => {
       if (!value) return "URL is required";
