@@ -16,7 +16,11 @@ const {
   deleteKernel,
   listTerminals,
 } = require("./src/connect.cloud.js");
-const { ensureConnection, clearConnection } = require("./src/auth.js");
+const {
+  ensureConnection,
+  clearConnection,
+  connectFromRawUrl,
+} = require("./src/auth.js");
 const JupyterFileSystemProvider = require("./src/Filesystem/JupyterFileSystemProvider.js");
 const JupyterPty = require("./src/Terminal/JupyterPty.js");
 const {
@@ -81,6 +85,20 @@ async function activate(context) {
   context.subscriptions.push(terminateStatusBarItem);
 
   refreshStatusBar(); // starts in the "disconnected" state
+
+  // DEEP LINK HANDLER — lets a button on the MAyA web platform open VS
+  // Code and connect automatically, via a link like:
+  //   vscode://<publisher>.<extension-name>/connect?maya_url=<encoded-url>
+  // VS Code only routes here if this extension is installed; if it isn't,
+  // VS Code's own core shows an install prompt automatically, and if VS
+  // Code itself isn't installed, the browser just does nothing with an
+  // unregistered custom scheme — no extra detection code needed for either
+  // of those cases.
+  context.subscriptions.push(
+    vscode.window.registerUriHandler({
+      handleUri: (uri) => handleIncomingUri(uri, context),
+    }),
+  );
 
   // Clean up the server-side terminal session whenever the user closes the
   // VS Code terminal tab, so ptys don't pile up on the Jupyter host. This
@@ -471,6 +489,54 @@ function refreshStatusBar() {
 // workspace folder — then immediately re-prompts for a new connection URL.
 // Shared by both "Change Cloud Connection" and "Terminate Session", which
 // are the same operation under two names.
+// Handles a vscode://<publisher>.<name>/connect?maya_url=<encoded> deep
+// link — connects directly using the supplied URL, with no input box.
+async function handleIncomingUri(uri, context) {
+  const params = new URLSearchParams(uri.query);
+  const mayaUrl = params.get("maya_url");
+
+  if (!mayaUrl) {
+    vscode.window.showWarningMessage(
+      "MAyA: this link is missing a connection URL (expected a maya_url parameter).",
+    );
+    return;
+  }
+
+  let connection;
+  try {
+    connection = await connectFromRawUrl(context, mayaUrl);
+  } catch (err) {
+    vscode.window.showErrorMessage(
+      `MAyA: invalid connection link — ${err.message}`,
+    );
+    return;
+  }
+
+  configure(connection);
+
+  try {
+    await set_session();
+    await get_version();
+  } catch (err) {
+    await handleSessionError(context, err);
+    return;
+  }
+
+  sessionActive = true;
+  refreshStatusBar();
+
+  const aboutToRestart = (vscode.workspace.workspaceFolders || []).length === 0;
+  if (!aboutToRestart) {
+    await restoreExistingTerminals();
+  }
+
+  mountWorkspace();
+  await vscode.commands.executeCommand(
+    "workbench.files.action.refreshFilesExplorer",
+  );
+  vscode.window.showInformationMessage("Connected to MAyA via link.");
+}
+
 async function terminateAndReconnect(
   context,
   { successMessage, isAutoRecovery = false },

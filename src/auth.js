@@ -62,9 +62,7 @@ function parseConnectionUrl(rawUrl) {
   const segments = url.pathname.split("/").filter(Boolean);
 
   if (segments.length < 3) {
-    throw new Error(
-      "URL must look like http://host:port/<request_id>/<mig_id>/<token>",
-    );
+    throw new Error("Enter a Valid URL");
   }
 
   const requestId = decodeURIComponent(segments[0]);
@@ -82,7 +80,7 @@ async function promptForConnectionUrl() {
   const input = await vscode.window.showInputBox({
     title: "Connect to MAyA",
     prompt: "Paste your MAyA connection URL",
-    placeHolder: "http://127.0.0.1:3000/<request_id>/<mig_id>/<token>",
+    placeHolder: "Enter MAyA Cloud Machine URL",
     ignoreFocusOut: true,
     validateInput: (value) => {
       if (!value) return "URL is required";
@@ -162,10 +160,31 @@ async function ensureConnection(context, { forcePrompt = false } = {}) {
   return { ...connection, mode };
 }
 
+// Same validation, protocol-enforcement, and persistence as ensureConnection,
+// but for a URL handed to us directly (e.g. from a deep link) rather than
+// typed into the input box. Throws on an invalid URL — caller should catch
+// and show that message, same as the input box's own inline validation
+// would have.
+async function connectFromRawUrl(context, rawUrl) {
+  const mode = loadEnvMode(context);
+  const parsed = parseConnectionUrl(rawUrl); // throws with a clear message on invalid input
+
+  const connection = {
+    origin: enforceProtocol(parsed.origin, mode),
+    migId: parsed.migId,
+    token: parsed.token,
+    requestId: parsed.requestId,
+  };
+
+  await saveConnection(context, connection);
+  return { ...connection, mode };
+}
+
 module.exports = {
   parseConnectionUrl,
   enforceProtocol,
   loadEnvMode,
+  connectFromRawUrl,
   promptForConnectionUrl,
   saveConnection,
   loadStoredConnection,

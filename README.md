@@ -1,4 +1,4 @@
-# MAyA — VS Code Connector
+# MAyA — Cloud to VS Code Connector
 
 **M**ulti-user **A**llocation s**y**stem for compute **A**utomation
 
@@ -105,3 +105,8 @@ VS Code's notebook editor needs to connect to a real kernel to execute cells —
 ## Feedback
 
 Found a bug or have a feature request? Use the thumbs-down / feedback option in VS Code, or reach out to your MAyA administrator.
+
+<p align="center">
+  <i>Crafted with ❤️ in Chandigarh, India</i><br>
+  Telecommunication Research Laboratory · Menthosa Solutions Pvt. Ltd.
+</p>

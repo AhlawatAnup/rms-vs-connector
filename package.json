@@ -1,10 +1,11 @@
 {
   "name": "maya-vscode-connector",
   "publisher": "MenthosaSolutions",
-  "displayName": "MAyA - VS Code Connector",
+  "displayName": "MAyA - Cloud to VS Code Connector",
   "description": "MAyA — Multi-user Allocation sYstem for compute Automation. This extension allows you to connect to MAyA and manage your compute resources directly from VS Code.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "repository": "https://github.com/AhlawatAnup/rms-vs-connector",
+  "icon": "images/icon.png",
   "engines": {
     "vscode": "^1.125.0"
   },
@@ -13,7 +14,8 @@
   ],
   "activationEvents": [
     "onFileSystem:jupyterfs",
-    "onCommand:rms-vs-connector.registerCloud"
+    "onCommand:rms-vs-connector.registerCloud",
+    "onUri"
   ],
   "main": "./extension.js",
   "contributes": {
