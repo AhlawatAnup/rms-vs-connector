@@ -125,7 +125,10 @@ class JupyterFileSystemProvider {
     try {
       data = await getContents(serverPath);
     } catch (err) {
-      console.error(`rms-vs-connector: readDirectory("${serverPath}") failed`, err);
+      console.error(
+        `rms-vs-connector: readDirectory("${serverPath}") failed`,
+        err,
+      );
       vscode.window.showErrorMessage(
         `Jupyter FS: failed to list "${serverPath || "/"}" — ${err.message}`,
       );
@@ -141,7 +144,9 @@ class JupyterFileSystemProvider {
 
     const entries = data.content.map((item) => [
       item.name,
-      item.type === "directory" ? vscode.FileType.Directory : vscode.FileType.File,
+      item.type === "directory"
+        ? vscode.FileType.Directory
+        : vscode.FileType.File,
     ]);
 
     console.log(`readDirectory("${serverPath || "/"}") ->`, entries);
@@ -216,7 +221,12 @@ class JupyterFileSystemProvider {
         // parse yet — substitute a minimal valid nbformat skeleton instead
         // of calling JSON.parse on an empty string, which throws exactly
         // "Unexpected end of JSON input".
-        notebookContent = { cells: [], metadata: {}, nbformat: 4, nbformat_minor: 5 };
+        notebookContent = {
+          cells: [],
+          metadata: {},
+          nbformat: 4,
+          nbformat_minor: 5,
+        };
       } else {
         try {
           notebookContent = JSON.parse(text);
@@ -253,7 +263,12 @@ class JupyterFileSystemProvider {
     this._invalidateParent(serverPath);
 
     this._emitter.fire([
-      { type: exists ? vscode.FileChangeType.Changed : vscode.FileChangeType.Created, uri },
+      {
+        type: exists
+          ? vscode.FileChangeType.Changed
+          : vscode.FileChangeType.Created,
+        uri,
+      },
     ]);
   }
 

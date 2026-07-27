@@ -228,8 +228,24 @@ async function activate(context) {
         refreshStatusBar();
 
         vscode.window.showInformationMessage("Connected to MAyA.");
+
+        // If no workspace folder exists yet at all, mountWorkspace() below
+        // is about to trigger VS Code's forced extension-host restart
+        // (its documented behavior the very first time a folder is added
+        // to an empty window). That restart tears down this entire
+        // process — including any terminal WebSocket connections we just
+        // opened — leaving dead, unresponsive terminal tabs behind even
+        // though "WS OPEN" appeared to succeed moments before. So: skip
+        // restoration in THIS doomed pass entirely, and let the next
+        // (post-restart, now-stable) activation's own initial-connection
+        // check restore terminals cleanly instead.
+        const aboutToRestart =
+          (vscode.workspace.workspaceFolders || []).length === 0;
+        if (!aboutToRestart) {
+          await restoreExistingTerminals();
+        }
+
         mountWorkspace();
-        await restoreExistingTerminals();
         // Safety net: if the folder was already mounted from a previous
         // session and VS Code cached an empty/stale tree, force it to
         // re-query now that the session is confirmed fresh — so the user
@@ -455,7 +471,10 @@ function refreshStatusBar() {
 // workspace folder — then immediately re-prompts for a new connection URL.
 // Shared by both "Change Cloud Connection" and "Terminate Session", which
 // are the same operation under two names.
-async function terminateAndReconnect(context, { successMessage }) {
+async function terminateAndReconnect(
+  context,
+  { successMessage, isAutoRecovery = false },
+) {
   reset();
   sessionActive = false;
   refreshStatusBar();
@@ -478,6 +497,19 @@ async function terminateAndReconnect(context, { successMessage }) {
     await set_session();
     await get_version();
   } catch (err) {
+    if (isAutoRecovery) {
+      // We got here BECAUSE a previous session failed and auto-reset.
+      // If the freshly-entered link ALSO fails, don't loop back into
+      // handleSessionError again — just report it plainly and stop.
+      console.error(
+        "rms-vs-connector: auto-recovery reconnect also failed",
+        err,
+      );
+      vscode.window.showErrorMessage(
+        `Still couldn't connect with the new link: ${err.message || err}`,
+      );
+      return;
+    }
     await handleSessionError(context, err);
     return;
   }
@@ -485,57 +517,66 @@ async function terminateAndReconnect(context, { successMessage }) {
   sessionActive = true;
   refreshStatusBar();
 
+  // Same guard as registerCloud. Note: this path always unmounts the
+  // workspace folder earlier in this function (see unmountWorkspace()
+  // above), so workspaceFolders will always be empty here — meaning
+  // mountWorkspace() below will always trigger a restart for this
+  // particular flow, and terminal restoration will always be deferred to
+  // the next (post-restart) activation. That's expected and fine.
+  const aboutToRestart = (vscode.workspace.workspaceFolders || []).length === 0;
+  if (!aboutToRestart) {
+    await restoreExistingTerminals();
+  }
+
   mountWorkspace();
-  await restoreExistingTerminals();
   await vscode.commands.executeCommand(
     "workbench.files.action.refreshFilesExplorer",
   );
   vscode.window.showInformationMessage(successMessage);
 }
 
-// Maps set_session() failures to a message the user can actually act on,
-// with a "Reconnect" button wired to changeConnection for the cases where
-// that's the right fix (expired/invalid request, wrong machine, etc).
+// Maps set_session() failures to what should happen next. Pure network
+// errors (server unreachable) don't touch the saved connection — the
+// credentials are probably still fine, it's just a connectivity blip.
+// Everything else (expired session, invalid/unverified request, wrong
+// machine, etc.) means the saved link itself is no longer usable, so we
+// automatically wipe it and walk straight into the "enter a new link"
+// prompt — no button to click, no way to get stuck on a dead connection
+// with no path forward.
 async function handleSessionError(context, err) {
   console.error("rms-vs-connector: session setup failed", err);
 
   sessionActive = false;
   refreshStatusBar();
 
-  let message;
-  let offerReconnect = false;
+  if (err.status === "NETWORK") {
+    vscode.window.showErrorMessage(err.message);
+    return;
+  }
 
+  let reason;
   switch (err.status) {
     case 400:
-      message =
-        "Connection details are incomplete or malformed. Please reconnect.";
-      offerReconnect = true;
+      reason = "Connection details are incomplete or malformed.";
       break;
     case 403:
-      message =
-        "Session expired or this connection is no longer verified. Please reconnect.";
-      offerReconnect = true;
+      reason = "Session expired or this connection is no longer verified.";
       break;
     case 404:
-      message = "No such machine found for this connection. Please reconnect.";
-      offerReconnect = true;
-      break;
-    case "NETWORK":
-      message = err.message; // already a clear, user-facing message
+      reason = "No such machine found for this connection.";
       break;
     default:
-      message = err.message || "Failed to set up the cloud session.";
-      offerReconnect = true;
+      reason = err.message || "Failed to set up the cloud session.";
   }
 
-  if (offerReconnect) {
-    const choice = await vscode.window.showErrorMessage(message, "Reconnect");
-    if (choice === "Reconnect") {
-      await vscode.commands.executeCommand("rms-vs-connector.changeConnection");
-    }
-  } else {
-    vscode.window.showErrorMessage(message);
-  }
+  vscode.window.showWarningMessage(
+    `${reason} Clearing the saved connection — enter a new link to reconnect.`,
+  );
+
+  await terminateAndReconnect(context, {
+    successMessage: "Reconnected with new credentials.",
+    isAutoRecovery: true,
+  });
 }
 
 async function createJupyterTerminal() {
@@ -590,15 +631,22 @@ async function restoreExistingTerminals() {
   );
 
   let restoredCount = 0;
+  let lastRestored = null;
   for (const session of sessions) {
     if (alreadyOpen.has(session.name)) continue;
-    attachToTerminal(session.name);
+    lastRestored = attachToTerminal(session.name);
     restoredCount++;
   }
 
   if (restoredCount > 0) {
+    // Without this, reattached terminals sit created-but-inert in the
+    // terminal dropdown — nothing wrong with them, but if the user is
+    // looking at whatever terminal panel was already open (not specifically
+    // one of these), it looks exactly like "nothing happened."
+    lastRestored.show();
+
     vscode.window.showInformationMessage(
-      `Reattached ${restoredCount} existing MAyA terminal${restoredCount === 1 ? "" : "s"} still running on the server.`,
+      `Reattached ${restoredCount} existing MAyA terminal${restoredCount === 1 ? "" : "s"} still running on the server. Check the terminal dropdown (▾ next to +) for entries starting with "MAyA:" if you had more than one.`,
     );
   }
 }
